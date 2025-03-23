@@ -1,0 +1,32 @@
+digraph {
+	rankdir=TB size="8,10"
+	Start [label="Начало" shape=ellipse]
+	Init [label="Инициализация игры
+(настройка светодиодов, кнопок, пьезоизлучателя)" shape=box]
+	GenSeq [label="Генерация последовательности
+случайных светодиодов" shape=box]
+	ShowSeq [label="Отображение последовательности
+(загораются светодиоды)" shape=box]
+	PlayerInput [label="Игрок вводит последовательность
+(нажимает кнопки)" shape=box]
+	CheckInput [label="Проверка правильности ввода" shape=diamond]
+	Correct [label="Правильный ввод:
+Добавить новый элемент
+в последовательность" shape=box]
+	Wrong [label="Неправильный ввод:
+Игра окончена" shape=box]
+	Restart [label="Игрок нажимает кнопку
+сброса для новой игры?" shape=diamond]
+	End [label="Конец игры" shape=ellipse]
+	Start -> Init
+	Init -> GenSeq
+	GenSeq -> ShowSeq
+	ShowSeq -> PlayerInput
+	PlayerInput -> CheckInput
+	CheckInput -> Correct [label=True]
+	CheckInput -> Wrong [label=False]
+	Correct -> GenSeq
+	Wrong -> Restart
+	Restart -> GenSeq [label="Да"]
+	Restart -> End [label="Нет"]
+}
