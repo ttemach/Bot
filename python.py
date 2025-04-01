@@ -2,9 +2,10 @@ import asyncio
 import os
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, BotCommand, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, BotCommand, ReplyKeyboardMarkup, KeyboardButton, ParseMode
 from aiogram.filters import Command
 from docx import Document
+import re
 
 TOKEN = "7966099738:AAFApqIteo2qjORnHOUO5t-VZP9jDKMkfVM"
 
@@ -26,6 +27,9 @@ menu_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
+
+# Словарь для хранения содержимого документов
+user_documents = {}
 
 async def set_commands(bot: Bot):
     commands = [
@@ -50,7 +54,6 @@ async def handle_files(message: Message):
     file_name = file.file_name
     logger.info(f"Пользователь {message.from_user.id} загружает файл: {file_name}")
 
-    # Проверяем, что файл имеет расширение .docx
     if not file_name.lower().endswith(".docx"):
         logger.warning(f"Формат файла {file_name} не поддерживается")
         await message.answer("❌ Формат файла не поддерживается! Разрешены только: DOCX.")
@@ -69,14 +72,65 @@ async def handle_files(message: Message):
         f.write(downloaded_file.read())
     logger.info(f"Файл {file_name} успешно сохранен в {save_location}")
 
-    await message.answer("✅ Файл успешно загружен и сохранен!")
-
-    # Читаем и отправляем первые несколько строк
     doc = Document(save_location)
-    text_lines = [para.text for para in doc.paragraphs if para.text.strip()][:5]  # Берем первые 5 непустых строк
-    text_preview = "\n".join(text_lines) if text_lines else "Документ пуст."
-    logger.info(f"Первые строки документа {file_name}: {text_preview}")
-    await message.answer(f"📖 Первые строки из документа:\n{text_preview}")
+    pages = []
+    current_page = []
+
+    def escape_markdown(text):
+        """Экранирует специальные символы MarkdownV2"""
+        escape_chars = r"_*[]()~`>#+-=|{}.!"
+        return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
+
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if text:
+            formatted_text = escape_markdown(text)
+
+            if para.style.name.startswith("List"):
+                formatted_text = f"• {formatted_text}"
+
+            if para.runs:
+                run = para.runs[0]
+                if run.bold:
+                    formatted_text = f"*{formatted_text}*"
+                if run.italic:
+                    formatted_text = f"_{formatted_text}_"
+                if run.underline:
+                    formatted_text = f"__{formatted_text}__"
+
+            current_page.append(formatted_text)
+
+        if len(current_page) >= 30:
+            pages.append("\n".join(current_page))
+            current_page = []
+
+    if current_page:
+        pages.append("\n".join(current_page))
+
+    user_documents[message.from_user.id] = pages
+    num_pages = len(pages)
+
+    page_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=str(i + 1))] for i in range(num_pages)],
+        resize_keyboard=True
+    )
+
+    await message.answer(f"✅ Файл успешно загружен! В документе {num_pages} страниц. Выберите номер страницы:", reply_markup=page_keyboard)
+
+@dp.message(lambda message: message.text.isdigit())
+async def get_page(message: Message):
+    user_id = message.from_user.id
+    if user_id not in user_documents:
+        await message.answer("❌ Вы еще не загружали файл!")
+        return
+
+    page_num = int(message.text) - 1
+    pages = user_documents[user_id]
+
+    if page_num < 0 or page_num >= len(pages):
+        await message.answer("❌ Такой страницы нет в документе!")
+    else:
+        await message.answer(f"📄 *Страница {page_num + 1}:*\n{pages[page_num]}")
 
 @dp.message()
 async def block_text_messages(message: Message):
