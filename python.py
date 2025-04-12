@@ -2,15 +2,20 @@ import asyncio
 import os
 import logging
 import re
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, BotCommand, ReplyKeyboardMarkup, KeyboardButton, FSInputFile
+from dotenv import load_dotenv
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import (
+    Message, BotCommand, ReplyKeyboardMarkup, KeyboardButton, FSInputFile,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+)
 from aiogram.filters import Command
 from docx import Document
 from docx2pdf import convert
 
-# === Токен и путь ===
-TOKEN = "7966099738:AAFApqIteo2qjORnHOUO5t-VZP9jDKMkfVM"
-SAVE_PATH = r"C:\Users\User\PycharmProjects\pythonProject4"
+# === Загрузка переменных окружения ===
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
+BASE_SAVE_PATH = r"C:\Users\User\PycharmProjects\pythonProject4"  # Основная папка для хранения файлов
 
 # === Логирование ===
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -21,9 +26,13 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # === Создание папки для сохранения файлов ===
-if not os.path.exists(SAVE_PATH):
-    os.makedirs(SAVE_PATH)
-    logger.info(f"Создана директория: {SAVE_PATH}")
+def create_user_folder(user_id: int) -> str:
+    # Создаём папку с именем пользователя (по его user_id)
+    user_folder = os.path.join(BASE_SAVE_PATH, str(user_id))
+    if not os.path.exists(user_folder):
+        os.makedirs(user_folder)
+        logger.info(f"Создана директория для пользователя {user_id}: {user_folder}")
+    return user_folder
 
 # === Клавиатура меню ===
 menu_keyboard = ReplyKeyboardMarkup(
@@ -45,6 +54,16 @@ async def set_commands(bot: Bot):
     await bot.set_my_commands(commands)
     logger.info("Команды установлены")
 
+# === Удаление файла через X минут ===
+async def schedule_file_deletion(file_path: str, delay_minutes: int = 10):
+    await asyncio.sleep(delay_minutes * 60)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            logger.info(f"Файл удалён автоматически: {file_path}")
+        except Exception as e:
+            logger.error(f"Ошибка при удалении файла: {e}")
+
 # === Обработчик /start ===
 @dp.message(Command("start"))
 async def start_handler(message: Message):
@@ -62,26 +81,49 @@ async def upload_file_info(message: Message):
 async def handle_files(message: Message):
     file = message.document
     file_name = file.file_name
-    logger.info(f"Загрузка файла: {file_name} от {message.from_user.id}")
+    user_id = message.from_user.id
+    logger.info(f"Загрузка файла: {file_name} от {user_id}")
 
     if not file_name.lower().endswith(".docx"):
-        await message.answer("❌ Поддерживаются только файлы DOCX.")
+        await message.answer(
+            "❌ Этот файл не удалось загрузить. Убедитесь, что он:\n"
+            "- В формате .docx\n"
+            "- Не превышает 50MB\n"
+            "- Не повреждён"
+        )
         return
 
     if file.file_size > 50 * 1024 * 1024:
         await message.answer("❌ Файл превышает 50 МБ.")
         return
 
-    file_path = await bot.get_file(file.file_id)
-    downloaded_file = await bot.download_file(file_path.file_path)
+    # Создаем папку для пользователя
+    user_folder = create_user_folder(user_id)
 
-    save_location = os.path.join(SAVE_PATH, file_name)
-    with open(save_location, "wb") as f:
-        f.write(downloaded_file.read())
-    logger.info(f"Файл сохранён: {save_location}")
+    await message.answer("🔄 Загружаем и обрабатываем ваш файл...")
 
-    # Чтение и разбиение документа на страницы
-    doc = Document(save_location)
+    try:
+        file_path = await bot.get_file(file.file_id)
+        downloaded_file = await bot.download_file(file_path.file_path)
+
+        save_location = os.path.join(user_folder, file_name)
+        with open(save_location, "wb") as f:
+            f.write(downloaded_file.read())
+        logger.info(f"Файл сохранён: {save_location}")
+
+        asyncio.create_task(schedule_file_deletion(save_location, delay_minutes=1))
+
+        doc = Document(save_location)
+    except Exception as e:
+        logger.error(f"Ошибка обработки: {e}")
+        await message.answer(
+            "❌ Этот файл не удалось загрузить. Убедитесь, что он:\n"
+            "- В формате .docx\n"
+            "- Не превышает 50MB\n"
+            "- Не повреждён"
+        )
+        return
+
     pages = []
     current_page = []
 
@@ -115,18 +157,40 @@ async def handle_files(message: Message):
     if current_page:
         pages.append("\n".join(current_page))
 
-    user_documents[message.from_user.id] = pages
+    user_documents[user_id] = pages
     num_pages = len(pages)
 
-    page_keyboard = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=str(i + 1))] for i in range(num_pages)],
-        resize_keyboard=True
+    inline_page_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Страница {i+1}", callback_data=f"page_{i}")]
+            for i in range(num_pages)
+        ]
     )
 
     await message.answer(
-        f"✅ Файл загружен! В нём {num_pages} страниц. Выберите номер страницы:",
-        reply_markup=page_keyboard
+        f"✅ Файл загружен!\nВ нём *{num_pages}* страниц.\nВыберите страницу для просмотра:",
+        reply_markup=inline_page_keyboard,
+        parse_mode="Markdown"
     )
+
+# === Callback-кнопка: показать выбранную страницу ===
+@dp.callback_query(F.data.startswith("page_"))
+async def show_selected_page(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in user_documents:
+        await callback.answer("Сначала загрузите файл!", show_alert=True)
+        return
+
+    page_num = int(callback.data.split("_")[1])
+    pages = user_documents[user_id]
+
+    if page_num < 0 or page_num >= len(pages):
+        await callback.answer("Такой страницы не существует!", show_alert=True)
+    else:
+        await callback.message.answer(
+            f"📄 *Страница {page_num + 1}:*\n{pages[page_num]}", parse_mode="MarkdownV2"
+        )
+        await callback.answer()
 
 # === Конвертация DOCX в PDF и отправка ===
 @dp.message(lambda message: message.text == "📄 Конвертировать в PDF")
@@ -136,14 +200,18 @@ async def convert_to_pdf(message: Message):
         await message.answer("❌ Сначала загрузите DOCX-файл!")
         return
 
-    # Находим последний загруженный файл пользователя
-    docx_files = [f for f in os.listdir(SAVE_PATH) if f.endswith(".docx")]
+    await message.answer("🔄 Конвертируем файл в PDF...")
+
+    # Создаем папку для пользователя
+    user_folder = create_user_folder(user_id)
+
+    docx_files = [f for f in os.listdir(user_folder) if f.endswith(".docx")]
     if not docx_files:
         await message.answer("❌ Файл не найден.")
         return
 
-    latest_file = max(docx_files, key=lambda f: os.path.getctime(os.path.join(SAVE_PATH, f)))
-    docx_path = os.path.join(SAVE_PATH, latest_file)
+    latest_file = max(docx_files, key=lambda f: os.path.getctime(os.path.join(user_folder, f)))
+    docx_path = os.path.join(user_folder, latest_file)
     pdf_path = docx_path.replace(".docx", ".pdf")
 
     try:
@@ -154,29 +222,19 @@ async def convert_to_pdf(message: Message):
         await bot.send_document(
             chat_id=message.chat.id,
             document=pdf_to_send,
-            caption=f"✅ Конвертация завершена! Вот ваш файл: {os.path.basename(pdf_path)}"
+            caption=f"✅ Обработка завершена! Вот ваш PDF: {os.path.basename(pdf_path)}"
         )
+
+        asyncio.create_task(schedule_file_deletion(pdf_path, delay_minutes=1))
+
     except Exception as e:
         logger.error(f"Ошибка при конвертации: {e}")
-        await message.answer("❌ Не удалось конвертировать файл.")
+        await message.answer(
+            "❌ Не удалось конвертировать файл.\n"
+            "Проверьте, что он не повреждён и попробуйте снова."
+        )
 
-# === Отображение выбранной страницы ===
-@dp.message(lambda message: message.text.isdigit())
-async def get_page(message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_documents:
-        await message.answer("❌ Сначала загрузите файл.")
-        return
-
-    page_num = int(message.text) - 1
-    pages = user_documents[user_id]
-
-    if page_num < 0 or page_num >= len(pages):
-        await message.answer("❌ Такой страницы не существует.")
-    else:
-        await message.answer(f"📄 *Страница {page_num + 1}:*\n{pages[page_num]}", parse_mode="MarkdownV2")
-
-# === Удаление лишнего текста ===
+# === Удаление лишних сообщений ===
 @dp.message()
 async def block_text_messages(message: Message):
     logger.warning(f"Удалено сообщение от {message.from_user.id}")
