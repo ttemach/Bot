@@ -64,6 +64,13 @@ async def schedule_file_deletion(file_path: str, delay_minutes: int = 10):
         except Exception as e:
             logger.error(f"Ошибка при удалении файла: {e}")
 
+# === Очистка данных пользователя ===
+async def cleanup_user_data(user_id: int, delay_minutes: int = 10):
+    await asyncio.sleep(delay_minutes * 60)
+    if user_id in user_documents:
+        del user_documents[user_id]
+        logger.info(f"Данные пользователя {user_id} очищены.")
+
 # === Обработчик /start ===
 @dp.message(Command("start"))
 async def start_handler(message: Message):
@@ -112,6 +119,7 @@ async def handle_files(message: Message):
         logger.info(f"Файл сохранён: {save_location}")
 
         asyncio.create_task(schedule_file_deletion(save_location, delay_minutes=1))
+        asyncio.create_task(cleanup_user_data(user_id, delay_minutes=1))
 
         doc = Document(save_location)
     except Exception as e:
@@ -127,15 +135,19 @@ async def handle_files(message: Message):
     pages = []
     current_page = []
 
-    def escape_markdown(text):
+    def escape_markdown_v2(text: str) -> str:
+        """
+        Экранирует текст для MarkdownV2 согласно документации Telegram.
+        """
         escape_chars = r"_*[]()~`>#+-=|{}.!\\"
         return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
 
     for para in doc.paragraphs:
         text = para.text.strip()
         if text:
-            formatted_text = escape_markdown(text)
+            formatted_text = escape_markdown_v2(text)
 
+            # Проверяем, является ли параграф частью списка
             if para.style.name.startswith("List"):
                 formatted_text = f"• {formatted_text}"
 
@@ -234,11 +246,12 @@ async def convert_to_pdf(message: Message):
             "Проверьте, что он не повреждён и попробуйте снова."
         )
 
-# === Удаление лишних сообщений ===
+# === Обработка неизвестных текстовых сообщений (не команды и не документы) ===
 @dp.message()
-async def block_text_messages(message: Message):
-    logger.warning(f"Удалено сообщение от {message.from_user.id}")
-    await message.delete()
+async def handle_unknown_text(message: Message):
+    if message.text and not message.text.startswith("/") and not message.document:
+        logger.info(f"Неизвестное сообщение от {message.from_user.id}: {message.text}")
+        await message.answer("❗ Пожалуйста, выберите действие из меню.")
 
 # === Запуск бота ===
 async def main():
