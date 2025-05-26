@@ -1,0 +1,5 @@
+pytest
+aiogram
+python-dotenv
+docx2pdf
+python-docx
