@@ -2,8 +2,10 @@ import os
 import logging
 import asyncio
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, CallbackQuery, BotCommand, MenuButtonCommands, FSInputFile
+from aiogram import Bot, Dispatcher
+from aiogram.types import (
+    Message, CallbackQuery, BotCommand, MenuButtonCommands, FSInputFile
+)
 from aiogram.filters import Command
 
 from file_manager import FileManager
@@ -12,26 +14,33 @@ from pdf_converter import PDFConverter
 from bot_ui.bot_ui_ui_factory import BotUI
 from config_loader import Config
 
-# === Загрузка конфигурации и переменных окружения ===
+
+# === Load configuration and environment ===
 load_dotenv()
 config = Config()
 
-# === Логирование ===
-logging.basicConfig(level=config.logging_level, format="%(asctime)s - %(levelname)s - %(message)s")
+# === Logging configuration ===
+logging.basicConfig(
+    level=config.logging_level,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-# === Инициализация бота и диспетчера ===
+# === Initialize bot and dispatcher ===
 bot = Bot(token=config.bot_token)
 dp = Dispatcher()
 
-# === Создание объектов классов с конфигурацией ===
+# === Create instances of service classes ===
 file_manager = FileManager(config.base_save_path)
 docx_processor = DocxProcessor(config.docx_lines_per_page)
 pdf_converter = PDFConverter()
 bot_ui = BotUI()
 
-# === Установка команд бота ===
-async def set_bot_commands(bot: Bot):
+
+async def set_bot_commands(bot: Bot) -> None:
+    """
+    Set default bot commands for the command menu.
+    """
     commands = [
         BotCommand(command="start", description="Запустить бота"),
         BotCommand(command="help", description="Помощь"),
@@ -40,26 +49,35 @@ async def set_bot_commands(bot: Bot):
     ]
     await bot.set_my_commands(commands)
 
-# === Обработчик команды /start ===
+
 @dp.message(Command("start"))
-async def start_handler(message: Message):
-    logger.info(f"Пользователь {message.from_user.id} запустил бота")
+async def start_handler(message: Message) -> None:
+    """
+    Handle /start command. Send greeting and show main menu.
+    """
+    logger.info(f"User {message.from_user.id} started the bot.")
     await message.answer("Привет! Выберите действие из меню.", reply_markup=bot_ui.menu_keyboard)
 
-# === Обработка кнопки "📂 Загрузить файл" ===
+
 @dp.message(lambda message: message.text == "📂 Загрузить файл")
-async def upload_file_info(message: Message):
-    logger.info(f"Пользователь {message.from_user.id} запросил загрузку файла")
+async def upload_file_info(message: Message) -> None:
+    """
+    Inform user to upload a .docx file when pressing upload button.
+    """
+    logger.info(f"User {message.from_user.id} requested to upload a file.")
     await message.answer("Отправьте файл формата .docx (не более 50 МБ).")
 
-# === Обработка загруженного файла ===
+
 @dp.message(lambda message: message.document)
-async def handle_files(message: Message):
+async def handle_files(message: Message) -> None:
+    """
+    Handle uploaded .docx files, process and split into pages.
+    """
     file = message.document
     user_id = message.from_user.id
     file_name = file.file_name
 
-    logger.info(f"Загрузка файла: {file_name} от {user_id}")
+    logger.info(f"Received file: {file_name} from user {user_id}")
 
     if not file_name.lower().endswith(".docx"):
         await message.answer("❌ Это не .docx файл.")
@@ -85,15 +103,21 @@ async def handle_files(message: Message):
         num_pages = len(pages)
 
         keyboard = bot_ui.create_page_keyboard(num_pages)
-        await message.answer(f"✅ Файл загружен! {num_pages} страниц. Выберите страницу для просмотра.", reply_markup=keyboard)
+        await message.answer(
+            f"✅ Файл загружен! {num_pages} страниц. Выберите страницу для просмотра.",
+            reply_markup=keyboard
+        )
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке файла: {e}")
+        logger.error(f"Error processing file: {e}")
         await message.answer("❌ Ошибка при загрузке файла.")
 
-# === Обработка кнопок страниц ===
+
 @dp.callback_query(lambda c: c.data.startswith("page_"))
-async def show_page(callback: CallbackQuery):
+async def show_page(callback: CallbackQuery) -> None:
+    """
+    Display the selected page from the uploaded .docx file.
+    """
     user_id = callback.from_user.id
     page_num = int(callback.data.split("_")[1])
 
@@ -107,9 +131,12 @@ async def show_page(callback: CallbackQuery):
         await callback.message.answer(f"📄 Страница {page_num + 1}:\n{pages[page_num]}")
         await callback.answer()
 
-# === Конвертация в PDF ===
+
 @dp.message(lambda message: message.text == "📄 Конвертировать в PDF")
-async def convert_to_pdf(message: Message):
+async def convert_to_pdf(message: Message) -> None:
+    """
+    Convert the latest uploaded .docx file to PDF and send it.
+    """
     user_id = message.from_user.id
 
     if user_id not in docx_processor.user_documents:
@@ -130,32 +157,45 @@ async def convert_to_pdf(message: Message):
         pdf_file = FSInputFile(pdf_path)
         await bot.send_document(message.chat.id, pdf_file, caption="Вот ваш PDF!")
     except Exception as e:
-        logger.error(f"Ошибка при конвертации: {e}")
+        logger.error(f"PDF conversion error: {e}")
         await message.answer("❌ Не удалось конвертировать файл в PDF.")
 
-# === Обработка "ℹ️ Помощь" ===
+
 @dp.message(lambda message: message.text == "ℹ️ Помощь")
-async def help_handler(message: Message):
+async def help_handler(message: Message) -> None:
+    """
+    Show help information to the user.
+    """
     await message.answer(bot_ui.messages.get_help_text(), parse_mode="Markdown")
 
-# === Обработка "⚙️ Настройки" ===
+
 @dp.message(lambda message: message.text == "⚙️ Настройки")
-async def settings_handler(message: Message):
+async def settings_handler(message: Message) -> None:
+    """
+    Show settings placeholder message.
+    """
     await message.answer(bot_ui.messages.get_settings_text(), parse_mode="Markdown")
 
-# === Обработка неизвестных сообщений ===
+
 @dp.message()
-async def handle_unknown_text(message: Message, menu_keyboard=None):
+async def handle_unknown_text(message: Message, menu_keyboard=None) -> None:
+    """
+    Handle unknown text messages that do not match any command or button.
+    """
     if message.text and not message.text.startswith("/") and not message.document:
-        logger.info(f"Неизвестное сообщение от {message.from_user.id}: {message.text}")
+        logger.info(f"Unknown message from user {message.from_user.id}: {message.text}")
         await message.answer(bot_ui.messages.get_unknown_text(), reply_markup=bot_ui.menu_keyboard)
 
-# === Точка входа ===
-async def main():
+
+async def main() -> None:
+    """
+    Main entry point: configure and start the bot.
+    """
     await set_bot_commands(bot)
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands(type="commands"))
-    logger.info("Бот запускается...")
+    logger.info("Bot is starting...")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
