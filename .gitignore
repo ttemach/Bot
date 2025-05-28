@@ -1,5 +1,6 @@
 *
 
+!bot_ui/
 !telegram_bot/
 !tests/
 
