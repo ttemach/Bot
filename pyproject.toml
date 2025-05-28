@@ -1,3 +1,36 @@
+[tool.poetry]
+name = "docx-pdf-telegram-bot"
+version = "0.1.0"
+description = "Telegram-бот для обработки DOCX файлов: просмотр страниц и конвертация в PDF"
+authors = ["Ваше Имя <you@example.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "telegram_bot" }]  # Указываем конкретный пакет
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Utilities",
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+aiogram = "^3.3.0"
+python-dotenv = "^1.0.1"
+python-docx = "^1.1.0"
+docx2pdf = "^0.1.8"
+
+# Условная зависимость для Windows (лучше использовать poetry's system-specific)
+pywin32 = { version = "^306", markers = "sys_platform == 'win32'", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.3.0"
+flake8 = "^7.0.0"
+mypy = "^1.8.0"
+pytest = "^8.0.0"
+
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+bot = "telegram_bot.main:main"  # Опционально: точка входа для CLI

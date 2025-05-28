@@ -3,33 +3,34 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, CallbackQuery, BotCommand
+from aiogram.types import Message, CallbackQuery, BotCommand, MenuButtonCommands, FSInputFile
 from aiogram.filters import Command
-from aiogram.types import FSInputFile
-from aiogram.types import BotCommand, MenuButtonCommands
 
-# Импортируем наши классы
 from file_manager import FileManager
 from docx_processor import DocxProcessor
 from pdf_converter import PDFConverter
-from bot_ui import BotUI
+from bot_ui.bot_ui_ui_factory import BotUI
+from config_loader import Config
 
-# Загрузка переменных окружения
+# === Загрузка конфигурации и переменных окружения ===
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-BASE_SAVE_PATH = r"C:\Users\User\PycharmProjects\pythonProject4"  # Путь к директории
+config = Config()
 
-# Логирование
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# === Логирование ===
+logging.basicConfig(level=config.logging_level, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-bot = Bot(token=TOKEN)
+# === Инициализация бота и диспетчера ===
+bot = Bot(token=config.bot_token)
 dp = Dispatcher()
 
-# Регистрируем команды бота (отображаются в интерфейсе Telegram)
+# === Создание объектов классов с конфигурацией ===
+file_manager = FileManager(config.base_save_path)
+docx_processor = DocxProcessor(config.docx_lines_per_page)
+pdf_converter = PDFConverter()
+bot_ui = BotUI()
 
-
+# === Установка команд бота ===
 async def set_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="Запустить бота"),
@@ -39,31 +40,13 @@ async def set_bot_commands(bot: Bot):
     ]
     await bot.set_my_commands(commands)
 
-# Добавляем эту функцию в main()
-async def main():
-    await set_bot_commands(bot)
-    await bot.set_chat_menu_button(menu_button=MenuButtonCommands(type="commands"))
-    logger.info("Бот запускается...")
-    await dp.start_polling(bot)
-
-
-    logger.info("Бот запускается...")
-    await dp.start_polling(bot)
-
-# Создание объектов классов
-file_manager = FileManager(BASE_SAVE_PATH)
-docx_processor = DocxProcessor()
-pdf_converter = PDFConverter()
-bot_ui = BotUI()
-
 # === Обработчик команды /start ===
 @dp.message(Command("start"))
 async def start_handler(message: Message):
     logger.info(f"Пользователь {message.from_user.id} запустил бота")
     await message.answer("Привет! Выберите действие из меню.", reply_markup=bot_ui.menu_keyboard)
 
-
-# === Обработка загрузки файла ===
+# === Обработка кнопки "📂 Загрузить файл" ===
 @dp.message(lambda message: message.text == "📂 Загрузить файл")
 async def upload_file_info(message: Message):
     logger.info(f"Пользователь {message.from_user.id} запросил загрузку файла")
@@ -82,31 +65,25 @@ async def handle_files(message: Message):
         await message.answer("❌ Это не .docx файл.")
         return
 
-    if file.file_size > 50 * 1024 * 1024:
+    if file.file_size > config.max_file_size_bytes:
         await message.answer("❌ Файл слишком большой. Максимум 50 МБ.")
         return
 
-    # Сохраняем файл
     user_folder = file_manager.create_user_folder(user_id)
     file_path = os.path.join(user_folder, file_name)
 
     await message.answer("🔄 Загружаем файл...")
 
     try:
-        # Получаем файл через API Telegram
         file_info = await bot.get_file(file.file_id)
         downloaded_file = await bot.download_file(file_info.file_path)
 
-        # Сохраняем файл на диск
         with open(file_path, "wb") as f:
-            # Получаем байты из объекта BytesIO
             f.write(downloaded_file.getvalue())
 
-        # Обработка .docx файла
         pages = docx_processor.process_docx(file_path, user_id)
         num_pages = len(pages)
 
-        # Создаем клавиатуру для страниц
         keyboard = bot_ui.create_page_keyboard(num_pages)
         await message.answer(f"✅ Файл загружен! {num_pages} страниц. Выберите страницу для просмотра.", reply_markup=keyboard)
 
@@ -114,9 +91,7 @@ async def handle_files(message: Message):
         logger.error(f"Ошибка при обработке файла: {e}")
         await message.answer("❌ Ошибка при загрузке файла.")
 
-
-
-# === Обработка кнопок для просмотра страниц ===
+# === Обработка кнопок страниц ===
 @dp.callback_query(lambda c: c.data.startswith("page_"))
 async def show_page(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -153,52 +128,32 @@ async def convert_to_pdf(message: Message):
 
     try:
         pdf_file = FSInputFile(pdf_path)
-        await bot.send_document(
-            message.chat.id, pdf_file, caption="Вот ваш PDF!"
-        )
+        await bot.send_document(message.chat.id, pdf_file, caption="Вот ваш PDF!")
     except Exception as e:
         logger.error(f"Ошибка при конвертации: {e}")
         await message.answer("❌ Не удалось конвертировать файл в PDF.")
-    # === Обработка неизвестных текстовых сообщений (не команды и не документы) ===
 
-
-# === Обработка кнопки "ℹ️ Помощь" ===
+# === Обработка "ℹ️ Помощь" ===
 @dp.message(lambda message: message.text == "ℹ️ Помощь")
 async def help_handler(message: Message):
-    help_text = (
-        "🆘 *Помощь*\n\n"
-        "Бот принимает `.docx` файлы, разбивает их на страницы и может конвертировать в PDF.\n\n"
-        "📂 *Загрузить файл* — отправьте `.docx` до 50 МБ.\n"
-        "📄 *Конвертировать в PDF* — получите PDF-документ.\n"
-        "⚙️ *Настройки* — в будущем появятся параметры конфигурации.\n\n"
-        "Если что-то не работает — отправьте /start."
-    )
-    await message.answer(help_text, parse_mode="Markdown")
+    await message.answer(bot_ui.messages.get_help_text(), parse_mode="Markdown")
 
-# === Обработка кнопки "⚙️ Настройки" ===
+# === Обработка "⚙️ Настройки" ===
 @dp.message(lambda message: message.text == "⚙️ Настройки")
 async def settings_handler(message: Message):
-    settings_text = (
-        "⚙️ *Настройки*\n\n"
-        "Пока что настроек нет. В будущих версиях вы сможете:\n"
-        "• выбирать язык вывода\n"
-        "• управлять удалением файлов\n"
-        "• форматировать текст при просмотре страниц\n"
-        "• и многое другое..."
-    )
-    await message.answer(settings_text, parse_mode="Markdown")
+    await message.answer(bot_ui.messages.get_settings_text(), parse_mode="Markdown")
 
-
-
+# === Обработка неизвестных сообщений ===
 @dp.message()
 async def handle_unknown_text(message: Message, menu_keyboard=None):
     if message.text and not message.text.startswith("/") and not message.document:
         logger.info(f"Неизвестное сообщение от {message.from_user.id}: {message.text}")
-        await message.answer("❗ Пожалуйста, выберите действие из меню.", reply_markup=menu_keyboard)
+        await message.answer(bot_ui.messages.get_unknown_text(), reply_markup=bot_ui.menu_keyboard)
 
-
-# Запуск бота
+# === Точка входа ===
 async def main():
+    await set_bot_commands(bot)
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands(type="commands"))
     logger.info("Бот запускается...")
     await dp.start_polling(bot)
 
