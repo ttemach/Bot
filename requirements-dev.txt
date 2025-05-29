@@ -1,4 +1,5 @@
 pytest
+pytest-asyncio
 aiogram
 python-dotenv
 docx2pdf
